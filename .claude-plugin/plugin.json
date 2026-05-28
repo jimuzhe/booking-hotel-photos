@@ -1,0 +1,13 @@
+{
+  "name": "booking-hotel-photos",
+  "description": "Batch scrape and download hotel photos from Booking.com (Playwright + requests). Supports city/hotel search, configurable hotel count, image size, and concurrent downloads.",
+  "version": "2.0.0",
+  "author": {
+    "name": "LongDz"
+  },
+  "homepage": "https://github.com/LongDz/booking-hotel-photos",
+  "repository": "https://github.com/LongDz/booking-hotel-photos",
+  "license": "MIT",
+  "keywords": ["booking", "hotel", "photos", "scraper", "playwright", "download"],
+  "skills": "./"
+}

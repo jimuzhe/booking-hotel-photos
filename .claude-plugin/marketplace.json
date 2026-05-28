@@ -1,0 +1,16 @@
+
+{
+  "name": "booking-hotel-photos",
+  "description": "Batch scrape and download hotel photos from Booking.com",
+  "owner": {
+    "name": "LongDz"
+  },
+  "plugins": [
+    {
+      "name": "booking-hotel-photos",
+      "description": "Scrape and download hotel photos from Booking.com with Playwright",
+      "source": ".",
+      "category": "utilities"
+    }
+  ]
+}

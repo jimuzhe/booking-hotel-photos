@@ -1,0 +1,82 @@
+---
+name: booking-hotel-photos
+version: 1.0.0
+description: >-
+  Batch scrape and download hotel photos from Booking.com (Playwright + requests).
+  Before scraping, automatically install Python deps and Playwright browser.
+  Use when the user mentions Booking.com 酒店照片, 抓取 booking 图片, download.py,
+  fetch_urls, booking_photos, or hotel gallery download by city/hotel name.
+metadata:
+  requires:
+    bins: ["python3"]
+---
+
+# Booking 酒店照片抓取
+
+## 项目路径
+
+```bash
+export BOOKING_SCRAPER_ROOT="/path/to/booking"   # 解压/克隆后的根目录
+cd "$BOOKING_SCRAPER_ROOT"
+```
+
+在 **booking 仓库根目录**打开 Claude Code 时，`BOOKING_SCRAPER_ROOT` 即当前项目根。
+
+## 步骤 0：自动装依赖（每次任务必须先做）
+
+**不要等用户开口——skill 触发后 Agent 必须先执行本节，再跑 `download.py`。**
+
+```bash
+cd "${BOOKING_SCRAPER_ROOT:-.}"
+
+python3 -m pip install -r requirements.txt
+python3 -m playwright install chromium
+test -f config.json || cp config.example.json config.json
+```
+
+需要网络；Playwright 首次安装约 1–2 分钟。完成后告知用户「依赖已就绪」，再抓取。
+
+自检：`python3 -c "import playwright, requests; print('deps ok')"`
+
+## 主入口：`download.py`
+
+```bash
+python3 download.py -q "搜索词" --headless
+python3 download.py -q "东京" --hotels 1 -o ~/Pictures/booking --headless
+python3 download.py --only-download -i urls.json -o ~/Pictures/booking
+python3 download.py -q "东京" --only-fetch -i urls.json
+```
+
+| 参数 | 含义 |
+|------|------|
+| `-q` | 城市/酒店名 |
+| `-n` / `--hotels` | 最多几家（默认 3，`0`=不限） |
+| `-p` | 搜索页数 |
+| `-o` | 照片目录 |
+| `-w` | 下载并发（建议 3） |
+| `--headless` | 无界面浏览器 |
+
+目录优先级：`-o` > `BOOKING_OUTPUT_DIR` > `config.json` > `./booking_photos`
+
+## 分步
+
+```bash
+python3 fetch_urls.py -q "东京" --max-hotels 5 --headless -o urls.json
+python3 download_photos.py -i urls.json -o ./booking_photos -w 3
+```
+
+## 完成后汇报
+
+- 搜索词、酒店数、照片总数
+- 输出目录与 `urls.json` 绝对路径
+- 下载成功/失败数
+
+## 约束
+
+- 长任务需足够超时（单酒店约 1–2 分钟）
+- 下载并发 ≤ 5
+- 遵守 Booking.com ToS
+
+## 参考
+
+[reference.md](reference.md)
