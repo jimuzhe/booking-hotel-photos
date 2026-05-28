@@ -2,16 +2,35 @@
 
 从 Booking.com 批量爬取酒店照片并下载到本地。
 
+## 安装（给别人用）
+
+### 方式一：一键安装（推荐）
+
+```bash
+git clone <仓库地址> booking-hotel-photos
+cd booking-hotel-photos
+bash install.sh
+```
+
+### 方式二：手动安装
+
+```bash
+# 1. 安装 Python 依赖 + Playwright 浏览器
+bash scripts/setup.sh
+
+# 2. 验证
+python3 -c "import playwright, requests; print('deps ok')"
+```
+
+安装完成后，把 `booking-hotel-photos/` 目录放到 `~/.claude/skills/` 下即可在 Claude Code 中使用。
+
 ## 快速开始
 
 ```bash
-# 1. 安装依赖
-bash scripts/setup.sh
-
-# 2. 一键抓取 + 下载
+# 一键抓取 + 下载
 python3 src/download.py -q "大阪" --hotels 3 --headless
 
-# 3. 查看结果
+# 查看结果
 ls booking_photos/
 ```
 
