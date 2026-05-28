@@ -18,6 +18,7 @@ from config import get_output_dir, get_urls_file, CONFIG_FILE
 
 # src/ 目录（本文件所在目录）
 _SRC_DIR = Path(__file__).resolve().parent
+MAX_WORKERS = 10
 
 
 def main():
@@ -55,7 +56,7 @@ def main():
         metavar="FILE",
         help=f"URL 列表 JSON (默认: {default_urls})",
     )
-    p.add_argument("-w", "--workers", type=int, default=3, help="下载并发数 (默认: 3，建议勿太大)")
+    p.add_argument("-w", "--workers", type=int, default=3, help=f"下载并发数 (默认: 3，范围 1-{MAX_WORKERS})")
     p.add_argument("--headless", action="store_true", help="浏览器无界面运行")
     p.add_argument(
         "--size",
@@ -65,6 +66,8 @@ def main():
     )
     p.add_argument("--checkin", default="", help="入住 YYYY-MM-DD")
     p.add_argument("--checkout", default="", help="退房 YYYY-MM-DD")
+    p.add_argument("--min-delay", type=float, default=0.6, help="抓取阶段最小随机延迟秒数")
+    p.add_argument("--max-delay", type=float, default=1.4, help="抓取阶段最大随机延迟秒数")
     p.add_argument(
         "--only-download",
         action="store_true",
@@ -76,6 +79,7 @@ def main():
         help="只抓 URL，不下载",
     )
     args = p.parse_args()
+    args.workers = max(1, min(int(args.workers), MAX_WORKERS))
     args.output = get_output_dir(args.output)
     args.urls_file = get_urls_file(args.urls_file)
 
@@ -83,6 +87,7 @@ def main():
         print(f"配置: {CONFIG_FILE}")
     print(f"下载目录: {args.output}")
     print(f"URL 文件: {args.urls_file}\n")
+    print(f"下载并发: {args.workers} (上限 {MAX_WORKERS})\n")
 
     if args.only_download:
         if not args.urls_file:
@@ -109,6 +114,7 @@ def main():
         cmd_fetch.extend(["--checkin", args.checkin])
     if args.checkout:
         cmd_fetch.extend(["--checkout", args.checkout])
+    cmd_fetch.extend(["--min-delay", str(args.min_delay), "--max-delay", str(args.max_delay)])
 
     print("执行:", " ".join(cmd_fetch))
     if subprocess.run(cmd_fetch).returncode != 0:
@@ -134,7 +140,10 @@ def _run_download(args) -> int:
         "--workers", str(args.workers),
     ]
     print("执行:", " ".join(cmd_dl))
-    return subprocess.run(cmd_dl).returncode
+    rc = subprocess.run(cmd_dl).returncode
+    if rc == 0:
+        print("\n执行完成：可在上方 DOWNLOAD_SUMMARY 查看下载统计。")
+    return rc
 
 
 if __name__ == "__main__":

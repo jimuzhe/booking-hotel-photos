@@ -4,6 +4,20 @@
 
 ## 安装（给别人用）
 
+### 给 AI 的一句话安装指令（Claude Code / Cursor Agent）
+
+把下面这句话直接发给 AI，它会在终端执行安装：
+
+```bash
+请在终端执行：git clone https://github.com/jimuzhe/booking-hotel-photos.git ~/.claude/skills/booking-hotel-photos && cd ~/.claude/skills/booking-hotel-photos && bash install.sh
+```
+
+安装完成后可让 AI 继续执行验证：
+
+```bash
+请在终端执行：python3 -c "import playwright, requests; print('deps ok')"
+```
+
 ### 方式一：一键安装（推荐）
 
 ```bash

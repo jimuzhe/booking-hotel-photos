@@ -32,7 +32,7 @@ metadata:
 | `only_fetch` | "只抓链接/只获取URL/不下载" → `true` | `false` |
 | `only_download` | "只下载/用已有链接下载" → `true` | `false` |
 | `urls_file` | "用/从 + 文件名" → 该文件路径 | `./urls.json` |
-| `headless` | "无界面/后台" → `true` | `true` |
+| `headless` | "无界面/后台" → `true` | `false` |
 
 ### 提取示例
 
@@ -44,9 +44,9 @@ metadata:
 
 ## 执行流程
 
-### Step 0：安装依赖（每次任务必须先做）
+### Step 0：依赖检测与安装（先检测，缺失再安装）
 
-**不要等用户开口——skill 触发后必须先执行本节。**
+**skill 触发后先执行检测。仅在依赖缺失时安装，避免每次重复安装。**
 
 SKILL_DIR 为 skill 所在目录（即本 SKILL.md 的上级目录）。
 
@@ -54,14 +54,14 @@ SKILL_DIR 为 skill 所在目录（即本 SKILL.md 的上级目录）。
 SKILL_DIR="<skill 目录绝对路径>"
 cd "$SKILL_DIR"
 
-python3 -m pip install -r requirements.txt
-python3 -m playwright install chromium
+# 先检测依赖
+python3 -c "import playwright, requests; print('deps ok')" || \
+  (python3 -m pip install -r requirements.txt && python3 -m playwright install chromium)
+
 test -f config.json || cp config.example.json config.json
 ```
 
-自检：`python3 -c "import playwright, requests; print('deps ok')"`
-
-首次安装约 1–2 分钟。完成后告知用户「依赖已就绪」，再继续。
+首次安装约 1–2 分钟。完成后告知用户「依赖已就绪」，再继续任务。
 
 ### Step 1：构建命令
 
@@ -76,7 +76,7 @@ python3 src/download.py -q "<query>" --hotels <N> --size <size> -o <output> -w <
 
 ```bash
 # 只抓链接
-python3 src/fetch_urls.py -q "<query>" --max-hotels <N> --image-size <size> --headless -i <urls_file>
+python3 src/fetch_urls.py -q "<query>" --max-hotels <N> --image-size <size> --headless -o <urls_file>
 
 # 只下载
 python3 src/download_photos.py -i <urls_file> -o <output> -w <workers>
@@ -85,7 +85,7 @@ python3 src/download_photos.py -i <urls_file> -o <output> -w <workers>
 ### Step 2：执行并监控
 
 - 单酒店约 1–2 分钟，总时长 ≈ 酒店数 × 2 分钟
-- 下载并发 ≤ 5
+- 下载并发建议 ≤ 5（脚本会自动限制到 1~5）
 - 长任务设置足够超时（建议 600000ms）
 
 ### Step 3：完成后汇报
@@ -95,6 +95,7 @@ python3 src/download_photos.py -i <urls_file> -o <output> -w <workers>
 - 输出目录绝对路径
 - urls.json 绝对路径
 - 下载成功/失败数
+- 若有失败，附失败数量和可能原因（网络抖动、目标链接失效等）
 
 ## 错误处理
 
@@ -103,7 +104,7 @@ python3 src/download_photos.py -i <urls_file> -o <output> -w <workers>
 | Playwright 未安装 | 自动执行 `python3 -m playwright install chromium` |
 | 搜索页加载失败 | 重试 3 次，仍失败则报错并告知用户 |
 | 某酒店图片获取失败 | 跳过该酒店，继续其余，最终汇报失败的酒店名 |
-| 下载失败 | 记录失败 URL，最终汇报失败数 |
+| 下载失败 | 每张图片自动重试 3 次（指数退避），最终汇报失败数 |
 | 依赖安装失败 | 告知用户手动运行 `pip install -r requirements.txt && playwright install chromium` |
 
 ## 约束

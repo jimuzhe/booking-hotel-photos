@@ -134,7 +134,7 @@ def deduplicate_photos(photos: List[PhotoInfo]) -> List[PhotoInfo]:
     return unique
 
 
-def random_delay(min_s: float = 1.5, max_s: float = 3.0):
+def random_delay(min_s: float = 0.6, max_s: float = 1.4):
     """随机延迟"""
     time.sleep(random.uniform(min_s, max_s))
 
@@ -212,8 +212,8 @@ def fetch_search_page(page: Page, url: str, max_retries: int = 3) -> bool:
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             # 等待酒店卡片出现
             page.wait_for_selector('[data-testid="property-card"]', timeout=20000)
-            # 额外等待懒加载
-            time.sleep(2)
+            # 额外短等待，平衡稳定性与速度
+            time.sleep(0.8)
             return True
         except Exception as e:
             logger.warning("加载失败 (尝试 %d/%d): %s", attempt + 1, max_retries, e)
@@ -332,9 +332,9 @@ def count_hotel_photos_in_dom(page: Page, scope: str = "modal") -> int:
 
 def scroll_gallery_for_lazy_load(
     page: Page,
-    max_rounds: int = 80,
-    stable_rounds: int = 6,
-    step_pause_ms: int = 500,
+    max_rounds: int = 50,
+    stable_rounds: int = 4,
+    step_pause_ms: int = 300,
 ) -> Set[str]:
     """
     图库为懒加载 / 虚拟列表：滚动时 DOM 里可能始终只有少量 img，
@@ -574,7 +574,8 @@ def fetch_hotel_photos(page: Page, hotel: HotelInfo, image_size: str = "large") 
 
 def run(query: str, pages: int = 1, output: str = "hotel_urls.json",
         image_size: str = "large", headless: bool = True,
-        checkin: str = "", checkout: str = "", max_hotels: int = 0):
+        checkin: str = "", checkout: str = "", max_hotels: int = 0,
+        min_delay: float = 0.6, max_delay: float = 1.4):
     """主流程"""
 
     all_hotels: List[HotelInfo] = []
@@ -609,7 +610,7 @@ def run(query: str, pages: int = 1, output: str = "hotel_urls.json",
                 all_hotels.extend(hotels)
 
                 if page_num < pages - 1:
-                    random_delay(2, 4)
+                    random_delay(min_delay, max_delay)
 
             # 去重
             seen_ids: Set[str] = set()
@@ -643,7 +644,7 @@ def run(query: str, pages: int = 1, output: str = "hotel_urls.json",
                 logger.info("  → %d 张照片", len(photos))
 
                 if i < len(all_hotels):
-                    random_delay(2, 4)
+                    random_delay(min_delay, max_delay)
 
         finally:
             context.close()
@@ -680,6 +681,8 @@ def main():
     parser.add_argument("--checkin", default="", help="入住日期 YYYY-MM-DD")
     parser.add_argument("--checkout", default="", help="退房日期 YYYY-MM-DD")
     parser.add_argument("--max-hotels", type=int, default=0, help="最多处理酒店数（0 表示不限制）")
+    parser.add_argument("--min-delay", type=float, default=0.6, help="请求间最小随机延迟秒数")
+    parser.add_argument("--max-delay", type=float, default=1.4, help="请求间最大随机延迟秒数")
 
     args = parser.parse_args()
 
@@ -692,6 +695,8 @@ def main():
         checkin=args.checkin,
         checkout=args.checkout,
         max_hotels=args.max_hotels,
+        min_delay=args.min_delay,
+        max_delay=args.max_delay,
     )
 
 

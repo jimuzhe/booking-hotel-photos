@@ -14,6 +14,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import local
 from typing import List, Tuple
 
 import requests
@@ -55,6 +56,8 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("download_photos")
+MAX_WORKERS = 10
+_thread_local = local()
 
 HEADERS = {
     "User-Agent": (
@@ -66,6 +69,18 @@ HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9",
     "Referer": "https://www.booking.com/",
 }
+
+
+def _get_session() -> requests.Session:
+    """线程内复用 Session，显著减少 TLS/连接握手开销。"""
+    session = getattr(_thread_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _thread_local.session = session
+    return session
 
 
 def safe_filename(name: str, max_len: int = 80) -> str:
@@ -81,20 +96,27 @@ def download_single_photo(args: Tuple[str, Path]) -> bool:
     url = normalize_photo_url(url)
     if save_path.exists():
         return True
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30, stream=True)
-        resp.raise_for_status()
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(save_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return True
-    except Exception as e:
-        logger.warning("下载失败 %s: %s", url[:80], e)
-        return False
+    retries = 3
+    session = _get_session()
+    for attempt in range(1, retries + 1):
+        try:
+            resp = session.get(url, headers=HEADERS, timeout=20, stream=True)
+            resp.raise_for_status()
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(save_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            return True
+        except Exception as e:
+            if attempt == retries:
+                logger.warning("下载失败 %s: %s", url[:80], e)
+                return False
+            # 指数退避，减少短期网络抖动导致的失败
+            time.sleep(1.2 * attempt)
+    return False
 
 
-def run(input_file: str, output_dir: str, workers: int = 5):
+def run(input_file: str, output_dir: str, workers: int = 5) -> dict:
     """主流程"""
 
     # 1. 读取 JSON
@@ -106,7 +128,10 @@ def run(input_file: str, output_dir: str, workers: int = 5):
     logger.info("开始下载")
     logger.info("酒店数: %d", len(hotels))
     logger.info("照片总数: %d", total_photos)
-    logger.info("并发数: %d", workers)
+    safe_workers = max(1, min(int(workers), MAX_WORKERS))
+    if safe_workers != workers:
+        logger.warning("并发数已调整为 %d (原始值: %s, 上限: %d)", safe_workers, workers, MAX_WORKERS)
+    logger.info("并发数: %d", safe_workers)
     logger.info("=" * 60)
 
     # 2. 准备下载任务
@@ -135,7 +160,7 @@ def run(input_file: str, output_dir: str, workers: int = 5):
             url = photo.get("url", "")
             if not url or not is_valid_hotel_photo_url(url):
                 continue
-            ext = "webp" if url.endswith(".webp") else "jpg"
+            ext = "webp" if ".webp" in url.split("?", 1)[0].lower() else "jpg"
             save_path = save_dir / f"{i:03d}.{ext}"
             tasks.append((url, save_path))
 
@@ -145,7 +170,7 @@ def run(input_file: str, output_dir: str, workers: int = 5):
     success = 0
     failed = 0
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    with ThreadPoolExecutor(max_workers=safe_workers) as executor:
         futures = {executor.submit(download_single_photo, t): t for t in tasks}
         for i, future in enumerate(as_completed(futures), 1):
             if future.result():
@@ -161,6 +186,16 @@ def run(input_file: str, output_dir: str, workers: int = 5):
     logger.info("失败: %d", failed)
     logger.info("保存至: %s", Path(output_dir).resolve())
     logger.info("=" * 60)
+    summary = {
+        "hotels": len(hotels),
+        "tasks": len(tasks),
+        "success": success,
+        "failed": failed,
+        "output_dir": str(Path(output_dir).resolve()),
+        "input_file": str(Path(input_file).resolve()),
+    }
+    print("DOWNLOAD_SUMMARY " + json.dumps(summary, ensure_ascii=False))
+    return summary
 
 
 def main():
@@ -172,7 +207,7 @@ def main():
         default=None,
         help=f"输出目录 (默认: {default_out}，可用 config.json 或 BOOKING_OUTPUT_DIR)",
     )
-    parser.add_argument("--workers", "-w", type=int, default=5, help="并发下载数")
+    parser.add_argument("--workers", "-w", type=int, default=5, help=f"并发下载数 (1-{MAX_WORKERS})")
 
     args = parser.parse_args()
     output = get_output_dir(args.output)
