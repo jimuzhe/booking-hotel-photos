@@ -330,104 +330,6 @@ def count_hotel_photos_in_dom(page: Page, scope: str = "modal") -> int:
     return len({p["url"].split("?")[0] for p in items if p.get("url")})
 
 
-def scroll_gallery_for_lazy_load(
-    page: Page,
-    max_rounds: int = 50,
-    stable_rounds: int = 4,
-    step_pause_ms: int = 300,
-) -> Set[str]:
-    """
-    图库为懒加载 / 虚拟列表：滚动时 DOM 里可能始终只有少量 img，
-    必须在每一屏把 URL 累加进集合，不能等滚完再数节点。
-    """
-    exp = parse_gallery_expectation(page)
-    min_target = exp.total_expected if exp.total_expected > 0 else 40
-    if exp.more_count > 0 or exp.preview_count > 0:
-        logger.info(
-            "  文案: 预览 %d + 更多 %d → 预期唯一约 %d 张（URL 去重），边滚边收集…",
-            exp.preview_count,
-            exp.more_count,
-            min_target,
-        )
-
-    accumulated: dict[str, str] = {}  # base_url -> 带 query 的完整 URL
-    prev_total = 0
-    stable = 0
-
-    def _merge_batch():
-        # 只从图库弹层收集，不把全页 <script> 里多尺寸重复 URL 算进「累计」
-        for item in collect_hotel_photo_urls_from_page(page, "modal"):
-            url = item.get("url", "")
-            if not is_valid_hotel_photo_url(url):
-                continue
-            url = normalize_photo_url(url)
-            base = url.split("?")[0]
-            if base not in accumulated:
-                accumulated[base] = url
-
-    _merge_batch()
-
-    for round_i in range(max_rounds):
-        page.evaluate("""
-        () => {
-            const scrollables = [];
-            const sel = [
-                '[role="dialog"]',
-                '[data-testid*="gallery" i]',
-                '[data-testid*="Gallery" i]',
-                '[class*="lightbox" i]',
-                '[class*="Gallery" i]',
-            ].join(', ');
-            document.querySelectorAll(sel).forEach(el => {
-                if (el.scrollHeight > el.clientHeight + 20) scrollables.push(el);
-            });
-            scrollables.sort(
-                (a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight)
-            );
-            const target = scrollables[0];
-            if (target) {
-                const step = Math.max(target.clientHeight * 0.75, 260);
-                target.scrollTop = Math.min(target.scrollTop + step, target.scrollHeight);
-            } else {
-                window.scrollBy(0, window.innerHeight * 0.75);
-            }
-        }
-        """)
-        page.wait_for_timeout(step_pause_ms)
-        _merge_batch()
-
-        total = len(accumulated)
-        if min_target > 0 and total >= min_target * 0.9:
-            logger.info(
-                "  懒加载达标: 去重后 %d / 预期约 %d (预览%d+更多%d, 滚 %d 轮)",
-                total, min_target, exp.preview_count, exp.more_count, round_i + 1,
-            )
-            return set(accumulated.values())
-
-        if total == prev_total:
-            stable += 1
-            if stable >= stable_rounds:
-                if min_target > 0 and total < min_target * 0.7:
-                    stable = 0
-                    page.evaluate("""
-                    () => {
-                        document.querySelectorAll('[role="dialog"], [data-testid*="Gallery" i]')
-                            .forEach(el => { el.scrollTop = el.scrollHeight; });
-                    }
-                    """)
-                    page.wait_for_timeout(step_pause_ms * 2)
-                    _merge_batch()
-                    continue
-                logger.info("  懒加载收集稳定: %d 张 (滚 %d 轮)", total, round_i + 1)
-                return set(accumulated.values())
-        else:
-            stable = 0
-            prev_total = total
-
-    logger.info("  懒加载达滚动上限: 累计 %d 张 (滚 %d 轮)", len(accumulated), max_rounds)
-    return set(accumulated.values())
-
-
 def collect_hotel_photo_urls_from_page(page: Page, scope: str = "all") -> List[dict]:
     """
     按范围收集酒店照片 URL。
@@ -506,7 +408,7 @@ def collect_hotel_photo_urls_from_page(page: Page, scope: str = "all") -> List[d
 
 
 def fetch_hotel_photos(page: Page, hotel: HotelInfo, image_size: str = "large") -> List[PhotoInfo]:
-    """访问酒店详情页，打开完整图库并获取全部照片 URL"""
+    """访问酒店详情页，直接获取当前页面可见及可解析到的照片 URL（不滚动）"""
     try:
         page.goto(hotel.url, wait_until="domcontentloaded", timeout=30000)
 
@@ -519,14 +421,7 @@ def fetch_hotel_photos(page: Page, hotel: HotelInfo, image_size: str = "large") 
         exp = parse_gallery_expectation(page)
         before = len(collect_hotel_photo_urls_from_page(page, "preview"))
 
-        scrolled_urls: Set[str] = set()
-        if open_full_photo_gallery(page):
-            scrolled_urls = scroll_gallery_for_lazy_load(page)
-            logger.info("  已打开完整图库并完成懒加载滚动收集")
-        else:
-            logger.warning("  未能点击「更多照片」，仅抓取首屏: %s", hotel.name)
-
-        # 合并：滚动累计（modal）+ 首屏预览（preview），按图片 ID 去重（预览 ⊆ 全库，不会重复计数）
+        # 不展开图库也不滚动，仅采集当前页面可见区域
         raw_photos = collect_hotel_photo_urls_from_page(page, "all")
         seen_keys: Set[str] = set()
         photos: List[PhotoInfo] = []
@@ -541,13 +436,10 @@ def fetch_hotel_photos(page: Page, hotel: HotelInfo, image_size: str = "large") 
             seen_keys.add(key)
             photos.append(PhotoInfo(url=url, alt=alt, category=category))
 
-        for url in scrolled_urls:
-            _add_photo(url, category="modal")
-
         for p in raw_photos:
             _add_photo(p.get("url", ""), p.get("alt", ""), p.get("category", "gallery"))
 
-        # 仍明显不足时，才用 script 兜底（不参与滚动阶段的「累计」判断）
+        # 数量不足时，用 script 兜底补充
         if exp.total_expected > 0 and len(photos) < exp.total_expected * 0.85:
             for p in collect_hotel_photo_urls_from_page(page, "scripts"):
                 _add_photo(p.get("url", ""), p.get("alt", ""), "embedded")
@@ -555,12 +447,11 @@ def fetch_hotel_photos(page: Page, hotel: HotelInfo, image_size: str = "large") 
         after = len(photos)
         if exp.total_expected > 0:
             logger.info(
-                "  结果: 去重后 %d 张 | 文案预期约 %d (预览%d+更多%d) | 滚动收集 %d",
+                "  结果: 去重后 %d 张 | 文案预期约 %d (预览%d+更多%d) | 模式: 无滚动",
                 after,
                 exp.total_expected,
                 exp.preview_count,
                 exp.more_count,
-                len(scrolled_urls),
             )
         elif after > before:
             logger.info("  图库展开: %d → %d 张", before, after)
